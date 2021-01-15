@@ -1,0 +1,17 @@
+name: "Afr_Admix_Assoc"
+output_dir: ../docs
+navbar:
+  title: "Afr_Admix_Assoc"
+  left:
+  - text: Home
+    href: index.html
+  - text: About
+    href: about.html
+  - text: License
+    href: license.html
+output:
+  workflowr::wflow_html:
+    toc: yes
+    toc_float: yes
+    theme: cosmo
+    highlight: textmate
