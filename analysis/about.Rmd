@@ -7,4 +7,6 @@ editor_options:
   chunk_output_type: console
 ---
 
-Describe your project.
+This is the research project website for the Hair morphology Association Study in African Admixed Individuals.
+
+Current authors are: Tina Lasisi, Jinguo Huang, and Arslan Zaidi.

@@ -8,4 +8,12 @@ editor_options:
   chunk_output_type: console
 ---
 
-Welcome to my research website.
+This is the research project website for the Hair morphology Association Study in African Admixed Individuals.
+
+## Admixture
+
+## Heritability
+
+## Association
+
+

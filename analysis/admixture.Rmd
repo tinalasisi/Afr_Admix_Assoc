@@ -1,0 +1,18 @@
+---
+title: "Thermocouple Summarized Data"
+author: "Tina Lasisi"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  workflowr::wflow_html:
+    toc: yes
+    toc_float: true
+    number_sections: yes
+editor_options:
+  chunk_output_type: console
+---
+## Introduction
+
+```{r}
+
+```
+
