@@ -1,0 +1,495 @@
+---
+title: "Data QC"
+author: "Tina Lasisi"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output:
+  workflowr::wflow_html:
+    toc: yes
+    toc_float: true
+    number_sections: yes
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+library(tidyverse)
+library(knitr)
+library(cowplot)
+
+F = rprojroot::is_rstudio_project$make_fix_file()
+
+knitr::opts_chunk$set(echo = FALSE, include = TRUE, eval = TRUE, warning = FALSE, message = FALSE, fig.retina = 2, fig.width = 8, fig.height = 4, out.width = "100%")
+
+```
+
+
+```{r functions, include=FALSE}
+plot_path = F("output/")
+
+pltsave_func <- function(plot, plot_path, width, height){
+  ggsave(
+      filename = paste0(deparse(substitute(plot)), ".png"),
+      plot = plot, 
+      path = plot_path,
+      width = width,
+      height = height)
+  plot(plot)
+}
+
+```
+
+
+```{r random}
+
+# images and other random analyses live in the old Hair Methods project folder
+"/Users/tpl5158/old_2020_HairPheno_manuscript"
+
+```
+
+
+```{r read_df_admixed, include=FALSE}
+
+df_admixed <- read_csv(F("data/ignore_data/renamed_df_Admixed_Merged.csv"))
+colnames(df_admixed)[c(18:22)] = c("SAS","AMR","EUR","AFR","EAS")
+
+
+```
+
+To explore the significance of quantifying hair fiber morphology, we explore the relationship between various quantitative hair traits, categorical data and genotype data on the same sample. 
+
+
+```{r df_admixed_plt, include=FALSE}
+df_admixed_plt <- df_admixed %>%
+  group_by(ID, hair_texture, HairTypeBin, sex, age) %>%
+  summarize(area_mean = mean(area),
+         area_median = median(area),
+         min_mean = mean(min),
+         max_mean = mean(max),
+         min_median = median(min),
+         max_median = median(max),
+         eccentricity_mean = mean(eccentricity),
+         eccentricity_median = median(eccentricity),
+         curv_median = mean(curv_median),
+         curv_mean = mean(curv_mean),
+         length_mean = mean(length_mean),
+         length_median = mean(length_median),
+         SAS = mean(SAS),
+         AMR = mean(AMR),
+         EUR = mean(EUR),
+         AFR = mean(AFR),
+         EAS = mean(EAS),
+         hair_count = mean(hair_count),
+         m_index = mean(m_index))  %>%
+  mutate(hair_texture = str_to_title(hair_texture)) 
+# %>% 
+#   filter(hair_count > 4 & AFR > 0.1)
+
+df_admixed_plt$hair_texture <- factor(df_admixed_plt$hair_texture, 
+                                     levels = c("Straight","Wavy",
+                                                "Curly",
+                                                "Very Curly",
+                                                NA))
+
+df_admixed_plt$HairTypeBin <- factor(df_admixed_plt$HairTypeBin, 
+                                     levels = c("Straight","Wavy",
+                                                "Curly",
+                                                "Very Curly"))
+
+# I filtered out anyone who had less than 5 hair fragments and I only kept the "first" reported ethnicity to make sure I didn't have duplicates of IDs
+```
+
+# Missing data
+
+```{r df_na_admixed, include=FALSE}
+
+
+# df_admixed_plt %>% 
+#   print(is.na)
+
+rowAny <- function(x) rowSums(x) > 0 
+     
+df_admixed_na <- df_admixed %>% 
+  filter(rowAny(
+         across(
+             .cols = area:max,
+             .fns = ~ is.na(.x)
+         )
+     )
+)
+
+write.csv(df_admixed_na, file = "data/ignore_data/admixed_na.csv", row.names = FALSE)
+
+```
+
+## Missing images
+
+Below we are going to extract all the images for individuals with missing cross-sections
+
+```{r}
+# extracting new id numbers form df
+list_id_missing <-df_admixed_na$ID 
+
+pattern_id_missing <- paste(list_id_missing, sep = "", collapse = "|")
+
+# image location path
+orig_im_path <- "/Users/tpl5158/Box/01_TPL5158/Box_Dissertation/Repurpose/AfricanAmerican_sections_raw_copies/"
+
+bramel_path <- "/Users/tpl5158/Box/01_TPL5158/Bramel_collab/data/raw/Raw_images_renamed"
+
+AfrEu_path <- "/Users/tpl5158/Box/01_TPL5158/Box_Dissertation/Repurpose/HairPhenotyping_Methods/data/fibermorph_input/admixed_real_hair/section/AfrEu_SectionImages_RawJPG"
+
+# new folder
+dir_qc_missing <- "/Users/tpl5158/Box/01_TPL5158/Box_Dissertation/Afr_Admix_Assoc/data/ignore_data/qc/missing"
+
+
+# list images from vector
+list_id_missing <- list.files(path = AfrEu_path, pattern = pattern_id_missing, full.names = TRUE, recursive = TRUE) %>% 
+  str_subset("^.*\\.RW2")
+
+file.copy(list_id_missing, dir_qc_missing)
+
+# list.files(path = AfrEu_path, pattern = pattern_nid_missing, full.names = TRUE, recursive = TRUE)
+
+
+
+
+
+```
+
+## Images with issues
+
+```{r}
+
+id_key <- F("data/ignore_data/id_key.csv") %>% 
+  read_csv() %>% 
+  mutate(ID = as.character(ID))
+# import csv bad_im
+list_bad_im <- F("data/ignore_data/bad_im.csv") %>% 
+  read_csv(col_names = FALSE)
+
+# import csv flawed_im
+list_flawed_im <- F("data/ignore_data/flawed_im.csv")%>% 
+  read_csv(col_names = FALSE)
+
+# merge
+list_issues_im <- bind_rows(list_flawed_im, list_bad_im) %>% 
+  unique()
+
+# rename to NID
+fn_nid_issues_df <- list_issues_im %>% 
+  separate(col = X1, into = c("ID", "rest"), sep = "_", extra = "merge") %>% 
+  left_join(., id_key) %>% 
+  # drop NA for now, but there are hairs that only were scanned in the first round that didn't make it through the new methods
+  drop_na() %>% 
+  select(NID, rest) %>% 
+  unite("fn", NID:rest)
+
+fn_nid_issues_list <- fn_nid_issues_df$fn
+
+fn_id_issues_df <- list_issues_im %>% 
+  separate(col = X1, into = c("ID", "rest"), sep = "_", extra = "merge") %>% 
+  left_join(., id_key) %>% 
+  # drop NA for now, but there are hairs that only were scanned in the first round that didn't make it through the new methods
+  drop_na() %>% 
+  select(ID, rest) %>% 
+  unite("fn", ID:rest)
+
+fn_id_issues_list <- fn_id_issues_df$fn
+
+# new folder
+dir_qc_issues <- "/Users/tpl5158/Box/01_TPL5158/Box_Dissertation/Afr_Admix_Assoc/data/ignore_data/qc/issues"
+
+# find nid
+pattern_nid_qc <- paste(fn_nid_issues_list, sep = "", collapse = "|")
+
+# find by id
+pattern_id_qc <- paste(fn_id_issues_list, sep = "", collapse = "|")
+
+list_qc_issues <- list.files(path = AfrEu_path, pattern = pattern_id_qc, full.names = TRUE, recursive = TRUE)
+
+file.copy(list_qc_issues, dir_qc_issues)
+
+
+
+```
+
+## Merge missing and issues image lists
+
+```{r}
+
+# merge lists together into final list
+id_qc <- c(fn_id_issues_list, list_id_missing) %>% 
+  unique()
+
+# copy all images into a general fixing folder
+dir_qc_manual <- F("data/ignore_data/im_manual_fix")
+
+pattern_nid_qc <- paste(nid_qc, sep = "", collapse = "|")
+
+list_qc_fn <- list.files(path = orig_im_path, pattern = pattern_nid_qc, full.names = TRUE)
+
+file.copy(list_qc_fn, dir_qc_manual)
+
+```
+
+
+# Corrupted images
+It turns out that some of the images were corrupted, so I made a subset that was just the corrupted images so I could search for the originals. 
+
+```{r}
+
+df_corr_im <- F("data/ignore_data/corrupted_im.csv") %>% 
+  read_csv()
+
+list_nid_corrupt <-df_corr_im$ID
+
+pattern_nid_corr <- paste(list_nid_corrupt, sep = "", collapse = "|")
+
+# image location path
+orig_im_path <- "/Users/tpl5158/Box/01_TPL5158/Box_Dissertation/Repurpose/AfricanAmerican_sections_raw_copies/"
+
+# list images from vector
+fn_nid_corr <- list.files(path = orig_im_path, pattern = pattern_nid_corr, full.names = TRUE, recursive = TRUE) %>% 
+  str_subset("^.*\\.RW2")
+
+# new folder
+dir_qc_corr <- F("data/ignore_data/qc/corrupt_src")
+
+file.copy(fn_nid_corr, dir_qc_corr)
+
+```
+
+
+Once the images have been reconverted from raw to tiff, I'm going to rename them according to the key
+
+```{r}
+
+section_files <- tibble(list.files(F("data/ignore_data/qc/corrupt_src_tiff/tiff")))
+colnames(section_files)[1] = "old_fn"
+
+section_files <- section_files %>% 
+  mutate(ID = as.character(old_fn)) %>% 
+  filter(!str_detect(ID, "P")) %>% 
+  separate(col = "ID", into = c("ID", "side", "hair", NA))
+
+rename_section_df <- left_join(section_files, id_key) %>% 
+  unite("new_fn", c("NID", "side", "hair")) %>% 
+  mutate(new_fn = paste0(new_fn, ".tiff")) %>% 
+  select(-ID)
+
+```
+
+
+```{r rename_section}
+setwd(F("data/ignore_data/qc/corrupt_src_tiff/tiff"))
+
+file.rename(from = as.vector(rename_section_df$old_fn), to = as.vector(rename_section_df$new_fn))
+
+```
+
+### Repeat for missing images
+Once the images have been reconverted from raw to tiff, I'm going to rename them according to the key
+
+```{r}
+
+section_files <- tibble(list.files(F("data/ignore_data/qc/missing")))
+colnames(section_files)[1] = "old_fn"
+
+section_files <- section_files %>% 
+  mutate(ID = as.character(old_fn)) %>% 
+  filter(!str_detect(ID, "P")) %>% 
+  separate(col = "ID", into = c("NID", "side", "hair", NA))
+
+rename_section_df <- left_join(section_files, id_key) %>% 
+  unite("new_fn", c("ID", "side", "hair")) %>% 
+  mutate(new_fn = paste0(new_fn, ".tiff")) %>% 
+  select(-NID)
+
+pattern_nid_corr <- paste(list_nid_corrupt, sep = "", collapse = "|")
+
+# image location path
+orig_im_path <- "/Users/tpl5158/Box/01_TPL5158/Box_Dissertation/Repurpose/AfricanAmerican_sections_raw_copies/"
+
+# list images from vector
+fn_nid_corr <- list.files(path = orig_im_path, pattern = pattern_nid_corr, full.names = TRUE, recursive = TRUE) %>% 
+  str_subset("^.*\\.RW2")
+
+# new folder
+dir_qc_corr <- F("data/ignore_data/qc/corrupt_src")
+
+file.copy(fn_nid_corr, dir_qc_corr)
+
+```
+
+
+```{r rename_section2}
+setwd(F("data/ignore_data/qc/missing"))
+
+file.rename(from = as.vector(rename_section_df$old_fn), to = as.vector(rename_section_df$new_fn))
+
+setwd(F("."))
+
+```
+
+# New merge
+After re-running the data, we can remerge all the information - curvature, cross-section, ancestry and PEQ
+
+```{r}
+
+# import cross-sectional results
+new_sect <- read_csv(F("data/ignore_data/qc/section_reanalyzed/Feb18_1604_fibermorph_section/summary_section_data.csv")) %>% 
+  separate(col = "ID", into = c("ID", "side", "hair", NA)) %>% 
+  rename(NID = ID) %>% 
+  left_join(x=., y=id_key)
+
+new_sect2 <- read_csv(F("data/ignore_data/qc/section_reanalyzed/Feb18_1842_fibermorph_section/summary_section_data.csv")) %>% 
+  separate(col = "ID", into = c("ID", "side", "hair", NA)) %>% 
+  left_join(x=., y=id_key)
+
+old_sect <- read_csv(F("data/ignore_data/qc/section_reanalyzed/old_summary_section_data.csv"))%>% 
+  separate(col = "ID", into = c("ID", "side", "hair", NA)) 
+
+  
+df_AdmixedSection <- bind_rows(old_sect, new_sect, new_sect2) %>% 
+  select(-NID)
+
+# This CSV file contains the latest curvature measurement variable for the Afr-Eur admixed sample.
+df_AdmixedCurv <- dplyr::as_tibble(read_csv(F("data/ignore_data/curvature_summary_data_Nov02_1334.csv"))) %>% 
+  select(-X1) %>% 
+  separate(col = ID, into = c(NA, "ID"), sep = "-|_")
+
+# This file contains m-index
+AfAd_mergedMar24 <- as_tibble(read_csv(F("data/ignore_data/AfAd_mergedMar24.csv"))) %>% 
+  select(ID, m_index) %>% 
+  mutate(ID = as.character(ID))
+
+# This CSV file contains the self-reported "group" the participants indicated and their self-reported hair texture if they answered that question on the Pre-Enrollment Questionnaire
+df_ADAPT_SelfRep <- dplyr::as_tibble(read_csv(F("data/ignore_data/selfRepAncestryHair_complete_ADAPT.csv")))%>% 
+  rename(
+    ID = 'Study ID',
+    age = Age,
+    SelfRepGroup = Group,
+    SelfRepComment = 'Clarify?',
+    participant_SelfRep = Participant,
+    father_SelfRep = Father,
+    mother_SelfRep = Mother,
+    fathers_mother_SelfRep = "Father's Mother",
+    fathers_father_SelfRep = "Father's Father",
+    mothers_mother_SelfRep = "Mother's Mother",
+    mothers_father_SelfRep = "Mother's Father",
+    hair_texture = "Hair Texture",
+    important_ancestry_features = "Important ancestry features"
+  ) %>% 
+  mutate(
+    ID = as.character(ID)
+  ) %>% 
+  select(-starts_with("X")) %>% 
+  select(ID, age, participant_SelfRep, hair_texture)
+
+library(readxl)
+
+df_ParticipantPlinkInfo <- as_tibble(read_excel(F("data/ignore_data/Participants_JW.xlsx"), col_types = c("numeric", "text", "text","text", "numeric", "numeric", "text","text", "text", "text", "text"))) %>% 
+  mutate(ID = as.character(ID),
+         age = as.numeric(Age),
+         sex = as.character(Sex)) %>% 
+  mutate(sex = factor(case_when(
+    sex == "1" ~ "male",
+    sex == "2" ~ "female"
+  ))) %>% 
+  select(ID, sex)
+
+```
+
+
+Now merging everything together
+
+```{r}
+
+df_Admixed_Merged <- df_AdmixedCurv %>% 
+  left_join(df_AdmixedSection, by = "ID") %>% 
+  left_join(df_ADAPT_SelfRep, by = "ID") %>% 
+  left_join(df_ParticipantPlinkInfo, by = "ID") %>%
+  left_join(AfAd_mergedMar24, by = "ID") %>% 
+  select(ID, age, sex, participant_SelfRep, hair_texture, everything()) %>% 
+  mutate(
+    participant_SelfRep = as_factor(participant_SelfRep),
+    hair_texture = fct_relevel(as_factor(hair_texture), c("straight", "wavy", "curly", "very curly")),
+    HairTypeBin = 
+           factor(case_when(
+             curv_median<= (1/54) ~ 'Straight',
+             curv_median<= (1/28.5) ~ 'Wavy',
+             curv_median<= (1/6) ~ 'Curly',
+             TRUE ~ 'Very Curly'), levels = c("Straight", "Wavy", "Curly", "Very Curly")),
+         HairShapeBin = 
+           factor(case_when(
+             eccentricity <= 0.6 ~ 'round',
+             TRUE ~ 'elliptical'), levels = c("round", "elliptical"))
+  )
+```
+
+```{r}
+# find missing
+
+df_admixed_na2 <- df_Admixed_Merged %>% 
+  filter(rowAny(
+         across(
+             .cols = area:max,
+             .fns = ~ is.na(.x)
+         )
+     )
+)
+
+write_csv(df_Admixed_Merged, file = "data/ignore_data/df_Admixed_Merged_20210218.csv")
+
+```
+
+
+Our data consists of 193 individuals for whom we have quantitative hair phenotype data. In our first data quality control step, we filter to keep individuals who have more than 4 hair fragments in their curvature image and over 10% African ancestry. We calculate mean and median values for the cross-sectional data we have collected for individuals (~ 6 sectioned hair fibers). In our analyses, we use median values as they are less affected by intra-individual outliers.
+
+
+# Self-reported hair texture vs. quantitative hair curvature
+
+We compare the self-reported hair texture with mean and median curvature for our sample. 
+
+```{r plt_admixed_SelfRepHair, fig.height=4, fig.width=8, fig.cap= "Self-reported hair texture vs. quantitative hair curvature"}
+
+
+plt_admixed_SelfRepHair_CurvMean <- df_admixed_plt %>%
+  filter(is.na(hair_texture)=="FALSE")%>%
+  ggplot(., aes(hair_texture,
+                      curv_mean))+
+  geom_violin(fill="#a6bddb",
+              scale = "width")+
+  geom_point(position = position_jitter(width=0.1),
+             alpha = 0.4)+
+  theme(axis.text.x = element_text(angle=90))+
+  labs(x = "Self reported hair texture",
+       y = bquote("Mean curvature ("*mm^-1*")"),
+       title = "Quantitative variation underlying \n self reported hair texture (mean)")+
+  theme_bw() +
+  coord_flip()
+
+
+plt_admixed_SelfRepHair_CurvMedian <- df_admixed_plt %>%
+  filter(is.na(hair_texture)=="FALSE")%>%
+  ggplot(., aes(hair_texture,
+                      curv_median))+
+  geom_violin(fill="#a6bddb",
+              scale = "width")+
+  geom_point(position = position_jitter(width=0.1),
+             alpha = 0.4)+
+  theme(axis.text.x = element_text(angle=90))+
+  labs(x = "Self reported hair texture",
+       y = bquote("Median curvature ("*mm^-1*")"),
+       title = "Quantitative variation underlying \n self reported hair texture (median)")+
+  theme_bw() +
+  coord_flip()
+
+plt_SelfRepCurv <- plot_grid(plt_admixed_SelfRepHair_CurvMean,
+          plt_admixed_SelfRepHair_CurvMedian, labels = c("a", "b"))
+
+plt_SelfRepCurv
+
+```
