@@ -10,9 +10,250 @@ output:
 editor_options:
   chunk_output_type: console
 ---
-## Introduction
+```{r setup, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
 
-```{r}
+library(tidyverse)
+library(knitr)
+library(cowplot)
+library(data.table)
+library(modelr)
+library(broom)
+
+F = rprojroot::is_rstudio_project$make_fix_file()
+
+knitr::opts_chunk$set(echo = FALSE, include = TRUE, eval = TRUE, warning = FALSE, message = FALSE, fig.retina = 2, fig.width = 8, fig.height = 4)
 
 ```
 
+```{r functions, include=FALSE}
+plot_path = F("output/")
+
+pltsave_func <- function(plot, plot_path, width=6, height=7){
+  ggsave(
+      filename = paste0(deparse(substitute(plot)), ".png"),
+      plot = plot, 
+      path = F("output/"),
+      width = width,
+      height = height)
+}
+
+```
+
+
+```{r read_df_pheno, include=FALSE}
+
+# Import the phenotype data and wrangle into tidy format
+df_pheno <- read_csv(F("data/ignore_data/df_Admixed_Merged.csv")) %>%
+  group_by(ID, hair_texture, HairTypeBin, sex, age) %>%
+  summarize(area_mean = mean(area),
+         area_median = median(area),
+         min_mean = mean(min),
+         max_mean = mean(max),
+         min_median = median(min),
+         max_median = median(max),
+         eccentricity_mean = mean(eccentricity),
+         eccentricity_median = median(eccentricity),
+         curv_median = mean(curv_median),
+         curv_mean = mean(curv_mean),
+         length_mean = mean(length_mean),
+         length_median = mean(length_median),
+         hair_count = mean(hair_count),
+         m_index = mean(m_index))  %>%
+  mutate(hair_texture = str_to_title(hair_texture)) %>% 
+  ungroup()
+
+df_pheno$hair_texture <- factor(df_pheno$hair_texture, 
+                                     levels = c("Straight","Wavy",
+                                                "Curly",
+                                                "Very Curly",
+                                                NA))
+
+df_pheno$HairTypeBin <- factor(df_pheno$HairTypeBin, 
+                                     levels = c("Straight","Wavy",
+                                                "Curly",
+                                                "Very Curly"))
+```
+
+
+```{r read_df_anc, include=FALSE}
+
+# import the id key and the ancestry file, as needed, and wrangle to extract just the ancestry markers
+# NB: when Jinguo gives you the new ancestry files, you may not have the same number of ancestry columns, so check
+
+df_idkey <- read_csv(F("data/ignore_data/id_key.csv")) %>% 
+  mutate(across(.fns = as.numeric))
+
+df_anc <- read_csv(F("data/ignore_data/df_ancestry.csv")) %>% 
+  rename(NID = ID) %>% 
+  mutate(NID = as.numeric(NID))
+
+df_anc <- left_join(x = df_anc, y=df_idkey) %>% 
+  select(NID, ID, 18:22) %>% 
+  unique()
+  
+colnames(df_anc)[c(3:7)] = c("SAS","AMR","EUR","AFR","EAS")
+```
+
+
+```{r df_merge, include=FALSE}
+
+df_merged <- left_join(x = df_pheno, y = df_anc)
+
+```
+
+# Admixture components
+Our sample consists of admixed individuals with primarily African and European ancestry.
+
+We first calculated the ancestry for the entire ADAPT sample.
+```{r plt_admixture_ADAPT, fig.height=5, fig.width=10, fig.cap= "Admixture components for hair project sample"}
+# show admixture plot for entire ADAPT sample
+```
+
+
+Below we plot the ancestries for the admixed African-European sample that was phenotyped using the new hair quantification methods. 
+
+```{r plt_admixture, fig.height=5, fig.width=10, fig.cap= "Admixture components for hair project sample"}
+
+anc <- df_merged %>% 
+  ungroup() %>% 
+  select(ID, SAS, AMR, AFR, EUR, EAS) %>% 
+  arrange(AFR)
+
+anc$ID <- factor(anc$ID, levels = anc$ID)
+
+manc = reshape2::melt(anc, id.vars="ID")
+
+plt_manc = ggplot(manc)+
+  geom_bar(aes(ID,value, fill=variable),
+           stat = "identity",
+           width=1)+
+  theme_bw()+
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())+
+  labs(x = "Individuals",
+       y = "Ancestry",
+       fill = "Population")+
+  scale_fill_manual(values = c(
+    "#e41a1c",
+    "#377eb8",
+    "#4daf4a",
+    "#984ea3",
+    "#ff7f00"
+  ))
+
+pltsave_func(plt_manc, height = 5)
+
+```
+
+The colors represent ancestries that correspond to the following 1000 Genomes populations:
+- SAS = South Asian
+- AMR = American
+- AFR = African
+- EUR = European
+- EAS = East Asian
+
+Each of these are metapopulations based on the grouping of multiple (sub)continental population groups in the [1000 Genomes repository](https://www.internationalgenome.org/category/population/).
+
+# Ancestry vs. hair morphology 
+
+We carried out a number of analyses using the genotype data collected for this diverse sample. In an admixed sample where a continuous trait has divergent distributions in the parental ancestry groups, the resulting admixed population can show a correlation between ancestry and that trait. Finding such a correlation suggests may imply a polygenic trait with high heritability.
+
+
+## Ancestry vs. curvature
+
+Here we plot the correlation between proportion of African ancestry and m-index, curvature, area, minimum diameter, maximum diameter, and area (using the median for each).
+
+
+```{r df_residuals, include=FALSE}
+
+# wrangle into long format and keep only the median values for the hair properties
+
+df_merged_long <- df_merged %>% 
+  select(ID, sex, age, AFR, m_index, contains("median") & !contains("length")) %>% 
+  pivot_longer(cols = m_index:curv_median, names_to="phenotype")
+
+df_resid <- df_merged_long %>% 
+  group_by(phenotype) %>% 
+  drop_na() %>% 
+  nest() %>% 
+  mutate(model = map(data, ~lm(value ~ AFR, data = .)),
+         residuals = map2(data, model, add_residuals)) %>% 
+  unnest(residuals) %>% 
+  select(ID, sex, age, AFR, phenotype, value, resid)
+
+df_resid_wide <- df_resid %>% 
+  pivot_wider(names_from = phenotype, values_from = c(value, resid))
+
+```
+
+### Uncorrected
+
+```{r plt_anc_pheno}
+
+
+plt_anc_pheno<- ggstatsplot::grouped_ggscatterstats(
+  data = df_merged_long,
+  x = AFR,
+  y = value,
+  grouping.var = phenotype,
+  bf.message = FALSE,
+  marginal = FALSE,
+  plotgrid.args = list(ncol = 2, labels = "auto"),
+  ggstatsplot.layer = FALSE,
+  ggplot.component = list(theme(text = element_text(size = 8)))
+)
+
+pltsave_func(plt_anc_pheno, height = 12, width = 10)
+
+plt_corrmat <- ggstatsplot::ggcorrmat(
+  data = df_resid_wide,
+  cor.vars = contains("value")
+)
+
+pltsave_func(plt_corrmat)
+
+```
+
+### Corrected
+
+# 1. skin vs. ancestry 
+# 2. hair curvature, hair eccentricity, hair area 
+# 3. ancestry corrected/residuals of all combinations pairwise
+# lm between m-index and african ancestry, take residuals and test those residuals against the other phenotypes. Also m-index vs. those phenotypes without residuals. Then repeat every possible combination
+# residualize each phenotype on ancestry then do a PCA
+
+
+```{r plt_resid_anc_pheno}
+
+plt_resid_anc_pheno<- ggstatsplot::grouped_ggscatterstats(
+  data = df_resid,
+  x = AFR,
+  y = resid,
+  grouping.var = phenotype,
+  bf.message = FALSE,
+  marginal = FALSE,
+  plotgrid.args = list(ncol = 2, labels = "auto"),
+  ggstatsplot.layer = FALSE,
+  ggplot.component = list(theme(text = element_text(size = 8)))
+)
+
+pltsave_func(plt_resid_anc_pheno, height = 12, width = 10)
+
+plt_resid_corrmat <- ggstatsplot::ggcorrmat(
+  data = df_resid_wide,
+  cor.vars = contains("resid")
+)
+
+pltsave_func(plt_resid_corrmat)
+
+```
+
+
+
+
+```{r imsave_mvc_evc_combo, include=FALSE}
+
+plt_strat <- plot_grid(mvc_uncorrected, mvc_corrected, evc1, evc2, labels = c("a", "b", "c", "d"), nrow = 2, ncol = 2)
+
+pltsave_func(plt_strat, plot_path, width = 8, height = 8)
+```
